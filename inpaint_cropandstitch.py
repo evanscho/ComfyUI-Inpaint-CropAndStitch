@@ -119,7 +119,7 @@ class CPUProcessorLogic(ProcessorLogic):
         return samples
 
     def fillholes_iterative_hipass_fill_m(self, samples):
-        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04]
+        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]
         results = []
         for i in range(samples.shape[0]):
             mask_np = samples[i].cpu().numpy()
@@ -645,7 +645,7 @@ class GPUProcessorLogic(ProcessorLogic):
         # filling holes at each level to preserve gradient/soft mask values.
         B, H, W = samples.shape
         device = samples.device
-        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04]
+        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]
         
         mask = samples.clone()
         
