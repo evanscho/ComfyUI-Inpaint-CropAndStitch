@@ -646,7 +646,7 @@ class GPUProcessorLogic(ProcessorLogic):
         # These are "outside" areas. Everything else is either mask or a hole.
         
         # Invert: 1 where it's 0 (potential hole/outside), 0 where it's 1 (mask/blocker)
-        inv_mask = 1.0 - (samples > 0.5).float()
+        inv_mask = 1.0 - (samples >= 0.5).float()
         
         # Pad to have a border for flood fill
         padded_inv = torch.zeros((B, H+2, W+2), device=device)
