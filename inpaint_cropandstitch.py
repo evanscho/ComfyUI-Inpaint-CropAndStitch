@@ -119,11 +119,13 @@ class CPUProcessorLogic(ProcessorLogic):
         return samples
 
     def fillholes_iterative_hipass_fill_m(self, samples):
-        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]
+        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04]
         results = []
         for i in range(samples.shape[0]):
             mask_np = samples[i].cpu().numpy()
             for threshold in thresholds:
+                if not np.any(mask_np >= threshold):
+                    continue
                 thresholded_mask = mask_np >= threshold
                 closed_mask = binary_closing(thresholded_mask, structure=np.ones((3, 3)), border_value=1)
                 filled_mask = binary_fill_holes(closed_mask)
@@ -643,11 +645,15 @@ class GPUProcessorLogic(ProcessorLogic):
         # filling holes at each level to preserve gradient/soft mask values.
         B, H, W = samples.shape
         device = samples.device
-        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]
+        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04]
         
         mask = samples.clone()
         
         for threshold in thresholds:
+            # Skip thresholds where no mask values exist at this level
+            if not torch.any(mask >= threshold).item():
+                continue
+            
             # Binarize at current threshold
             thresholded = (mask >= threshold).float()
             
