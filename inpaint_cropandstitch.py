@@ -124,6 +124,8 @@ class CPUProcessorLogic(ProcessorLogic):
         for i in range(samples.shape[0]):
             mask_np = samples[i].cpu().numpy()
             for threshold in thresholds:
+                if not np.any(mask_np >= threshold):
+                    continue
                 thresholded_mask = mask_np >= threshold
                 closed_mask = binary_closing(thresholded_mask, structure=np.ones((3, 3)), border_value=1)
                 filled_mask = binary_fill_holes(closed_mask)
@@ -639,56 +641,57 @@ class GPUProcessorLogic(ProcessorLogic):
 
     def fillholes_iterative_hipass_fill_m(self, samples):
         # samples shape: [B, H, W]
+        # Mirrors the CPU version: iterate through multiple thresholds from high to low,
+        # filling holes at each level to preserve gradient/soft mask values.
         B, H, W = samples.shape
         device = samples.device
+        thresholds = [1, 0.99, 0.97, 0.95, 0.93, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]
         
-        # We find areas connected to the border in the inverted mask.
-        # These are "outside" areas. Everything else is either mask or a hole.
+        mask = samples.clone()
         
-        # Invert: 1 where it's 0 (potential hole/outside), 0 where it's 1 (mask/blocker)
-        inv_mask = 1.0 - (samples > 0.5).float()
-        
-        # Pad to have a border for flood fill
-        padded_inv = torch.zeros((B, H+2, W+2), device=device)
-        padded_inv[:, 1:-1, 1:-1] = inv_mask
-        
-        # Initial seeds: the padding border
-        outside = torch.zeros((B, H+2, W+2), device=device)
-        outside[:, 0, :] = 1
-        outside[:, -1, :] = 1
-        outside[:, :, 0] = 1
-        outside[:, :, -1] = 1
-        
-        # Propagate 'outside' status through inv_mask
-        # We use a power-of-two growth for efficiency? No, simple iterative for now.
-        # But wait, max(H, W) is too many iterations.
-        # A better way is to use a large kernel or repeated doublings.
-        
-        # Actually, for 512-1024px, 512 iterations of MaxPool are still quite fast compared to CPU.
-        # But we can speed it up by using larger strides/kernels if we don't care about the exact shape?
-        # No, we need exact.
-        
-        curr_outside = outside
-        for _ in range(max(H, W)):
-            # Dilation
-            next_outside = TF.max_pool2d(curr_outside.unsqueeze(1), kernel_size=3, stride=1, padding=1).squeeze(1)
-            # Mask by inv_mask (only propagate to 0-areas)
-            next_outside = next_outside * padded_inv
-            # Also keep original border
-            next_outside[:, 0, :] = 1
-            next_outside[:, -1, :] = 1
-            next_outside[:, :, 0] = 1
-            next_outside[:, :, -1] = 1
-
-            if torch.all(next_outside == curr_outside):
-                break
-            curr_outside = next_outside
+        for threshold in thresholds:
+            # Skip thresholds where no mask values exist at this level
+            if not torch.any(mask >= threshold).item():
+                continue
             
-        # Final mask: anything not 'outside'
-        filled = 1.0 - curr_outside[:, 1:-1, 1:-1]
+            # Binarize at current threshold
+            thresholded = (mask >= threshold).float()
+            
+            # Binary closing (dilation then erosion) with 3x3 structure
+            closed = TF.max_pool2d(thresholded.unsqueeze(1), kernel_size=3, stride=1, padding=1).squeeze(1)
+            closed = -TF.max_pool2d(-closed.unsqueeze(1), kernel_size=3, stride=1, padding=1).squeeze(1)
+            
+            # Flood-fill from border to find "outside" regions in the closed mask
+            inv_closed = 1.0 - closed
+            
+            padded_inv = torch.zeros((B, H+2, W+2), device=device)
+            padded_inv[:, 1:-1, 1:-1] = inv_closed
+            
+            curr_outside = torch.zeros((B, H+2, W+2), device=device)
+            curr_outside[:, 0, :] = 1
+            curr_outside[:, -1, :] = 1
+            curr_outside[:, :, 0] = 1
+            curr_outside[:, :, -1] = 1
+            
+            for _ in range(max(H, W)):
+                next_outside = TF.max_pool2d(curr_outside.unsqueeze(1), kernel_size=3, stride=1, padding=1).squeeze(1)
+                next_outside = next_outside * padded_inv
+                next_outside[:, 0, :] = 1
+                next_outside[:, -1, :] = 1
+                next_outside[:, :, 0] = 1
+                next_outside[:, :, -1] = 1
+
+                if torch.all(next_outside == curr_outside):
+                    break
+                curr_outside = next_outside
+            
+            # Filled holes: areas that are not outside
+            filled = 1.0 - curr_outside[:, 1:-1, 1:-1]
+            
+            # Where filled is nonzero, ensure mask is at least `threshold`
+            mask = torch.max(mask, filled * threshold)
         
-        # Combine with original (ensure original mask pixels are kept)
-        return torch.max(samples, filled)
+        return mask
 
     def hipassfilter_m(self, samples, threshold):
         filtered_mask = samples.clone()
